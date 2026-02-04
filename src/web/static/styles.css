@@ -469,7 +469,7 @@ body {
 /* Footer */
 .footer {
     text-align: center;
-    padding: 40px 0 20px;
+    padding: 40px 0 80px;
     color: var(--text-muted);
     font-size: 0.9rem;
 }
@@ -481,6 +481,43 @@ body {
 
 .footer a:hover {
     text-decoration: underline;
+}
+
+/* Audio Player */
+.audio-player {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    z-index: 100;
+}
+
+.audio-player.hidden {
+    display: none;
+}
+
+.audio-player-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.audio-player-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+}
+
+.audio-player audio {
+    flex-shrink: 0;
+    height: 40px;
 }
 
 /* Responsive */

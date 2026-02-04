@@ -64,13 +64,32 @@ class ContentService:
         self.royal_road_parser = RoyalRoadParser()
         self.base_url = self.settings.base_url.rstrip("/")
 
+    MANUAL_ARTICLES_SLUG = "manually-added-articles"
+    MANUAL_ARTICLES_NAME = "Manually Added Articles"
+
+    def _get_or_create_manual_articles_source(self, session) -> Source:
+        """Get or create the unified source for manually added articles."""
+        source = SourceRepository.get_by_slug(session, self.MANUAL_ARTICLES_SLUG)
+        if source:
+            return source
+
+        # Create the unified source
+        return SourceRepository.create(
+            session,
+            type=SourceType.ARTICLE,
+            name=self.MANUAL_ARTICLES_NAME,
+            url="manual://articles",
+            item_count=0,
+            processing_mode=ProcessingMode.EAGER,
+        )
+
     def add_article(self, url: str, name: Optional[str] = None) -> dict:
         """
-        Add a single article as a source.
+        Add a single article to the unified "Manually Added Articles" feed.
 
         Args:
             url: URL of the article
-            name: Optional name for the source
+            name: Optional custom title for the article (ignored, uses parsed title)
 
         Returns:
             Created source as dict
@@ -81,21 +100,19 @@ class ContentService:
         article = self.article_parser.parse(url)
 
         with db_session() as session:
-            # Create source
-            source = SourceRepository.create(
-                session,
-                type=SourceType.ARTICLE,
-                name=name or article.title,
-                url=url,
-                item_count=1,
-                processing_mode=ProcessingMode.EAGER,  # Single articles are always eager
-            )
+            # Get or create the unified articles source
+            source = self._get_or_create_manual_articles_source(session)
+
+            # Check if article already exists
+            if ItemRepository.exists_by_url(session, source.id, url):
+                logger.info(f"Article already exists: {url}")
+                return source_to_dict(source, self.base_url)
 
             # Create item
             item = ItemRepository.create(
                 session,
                 source_id=source.id,
-                title=article.title,
+                title=name or article.title,
                 url=url,
                 content_text=article.text,
                 content_meta={
@@ -105,6 +122,9 @@ class ContentService:
                 },
                 published_at=article.published_at or datetime.utcnow(),
             )
+
+            # Update item count
+            source.item_count = len(ItemRepository.get_by_source(session, source.id))
 
             item_id = item.id
             result = source_to_dict(source, self.base_url)
