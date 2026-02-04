@@ -8,7 +8,7 @@ from typing import List, Optional
 from xml.etree import ElementTree as ET
 
 from src.config import get_settings
-from src.database import db_session, Source, Item, ItemRepository, ItemStatus, SourceRepository
+from src.database import db_session, Source, Item, ItemRepository, ItemStatus, SourceRepository, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,9 @@ class RSSGenerator:
 
         with db_session() as session:
             sources = SourceRepository.get_all(session)
+
+            # Filter out books (Royal Road) from unified feed
+            sources = [s for s in sources if s.type != SourceType.ROYAL_ROAD]
 
             # Build a map of source_id -> source info
             source_map = {}
