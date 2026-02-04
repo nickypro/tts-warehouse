@@ -99,6 +99,8 @@ class UnrealSpeechEngine(BaseTTSEngine):
                 json=payload,
                 timeout=120,
             )
+            if response.status_code != 200:
+                logger.error(f"API error: {response.status_code} - {response.text[:500]}")
             response.raise_for_status()
             elapsed = time.time() - start_time
 
@@ -117,7 +119,7 @@ class UnrealSpeechEngine(BaseTTSEngine):
         return output_path
 
     def _split_text(self, text: str, max_chars: int) -> list[str]:
-        """Split text into chunks at sentence boundaries."""
+        """Split text into chunks at sentence boundaries, enforcing max length."""
         if len(text) <= max_chars:
             return [text]
 
@@ -136,7 +138,26 @@ class UnrealSpeechEngine(BaseTTSEngine):
             if not sentence.endswith("."):
                 sentence += "."
 
-            if len(current_chunk) + len(sentence) + 1 <= max_chars:
+            # If sentence itself is too long, split it further
+            if len(sentence) > max_chars:
+                # Save current chunk first
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                # Split long sentence by other punctuation or hard limit
+                while len(sentence) > max_chars:
+                    # Try to find a good break point
+                    break_point = max_chars
+                    for sep in [", ", "; ", " - ", "\n", " "]:
+                        pos = sentence.rfind(sep, 0, max_chars)
+                        if pos > max_chars // 2:
+                            break_point = pos + len(sep)
+                            break
+                    chunks.append(sentence[:break_point].strip())
+                    sentence = sentence[break_point:].strip()
+                if sentence:
+                    current_chunk = sentence
+            elif len(current_chunk) + len(sentence) + 1 <= max_chars:
                 current_chunk += (" " if current_chunk else "") + sentence
             else:
                 if current_chunk:
