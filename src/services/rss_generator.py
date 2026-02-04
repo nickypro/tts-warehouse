@@ -9,11 +9,80 @@ from xml.etree import ElementTree as ET
 
 from src.config import get_settings
 from src.database import db_session, Source, Item, ItemRepository, ItemStatus, SourceRepository, SourceType
+from src.services.summary_service import generate_summary
 
 logger = logging.getLogger(__name__)
 
 # TTS speaking rate: ~150 words/min, ~5 chars/word = ~750 chars/min
 CHARS_PER_MINUTE = 750
+
+
+def build_enhanced_description(
+    content_text: str,
+    content_meta: dict,
+    url: str,
+    max_preview: int = 300,
+) -> str:
+    """
+    Build an enhanced description with preview, summary, link, and images.
+
+    Uses pre-generated summary from content_meta if available.
+    Returns HTML for proper rendering in podcast apps.
+
+    Args:
+        content_text: The full text content
+        content_meta: Metadata dict (may contain description, image_urls, summary)
+        url: Original article URL
+        max_preview: Maximum length of text preview
+
+    Returns:
+        Enhanced description as HTML string
+    """
+    parts = []
+
+    # 1. Short text preview
+    preview = content_meta.get("description", "")
+    if not preview and content_text:
+        preview = content_text[:max_preview]
+        if len(content_text) > max_preview:
+            preview += "..."
+    if preview:
+        parts.append(f"<p>{preview}</p>")
+
+    # 2. AI Summary (use cached if available)
+    summary = content_meta.get("summary")
+    if summary:
+        parts.append(f"<p><strong>Summary:</strong> {summary}</p>")
+
+    # 3. Link to original
+    parts.append(f'<p><a href="{url}" target="_blank">Read the original article</a></p>')
+
+    # 4. Separator and rendered images
+    image_urls = content_meta.get("image_urls", [])
+    if not image_urls and content_meta.get("image_url"):
+        image_urls = [content_meta["image_url"]]
+
+    if image_urls:
+        parts.append("<p>---</p>")
+        parts.append('<div style="max-width: 100%;">')
+        parts.append("<p><strong>Images from the article:</strong></p>")
+
+        for img_url in image_urls[:10]:  # Limit to 10 images
+            parts.append(
+                f'<a href="{img_url}" target="_blank">'
+                f'<img src="{img_url}" style="max-width: 100%;" />'
+                f'</a>'
+                f'<hr style="margin-top: 12px; margin-bottom: 12px;" />'
+            )
+
+        parts.append(
+            "<p><em>Apple Podcasts and Spotify do not show images in episode descriptions. "
+            'Try <a href="https://pocketcasts.com/" target="_blank">Pocket Casts</a> '
+            "or another podcast app.</em></p>"
+        )
+        parts.append("</div>")
+
+    return "".join(parts)
 
 
 def estimate_duration_from_text(text: str, round_to: int = 5) -> int:
@@ -165,10 +234,12 @@ class RSSGenerator:
             ET.SubElement(item_elem, "title").text = item.title
             ET.SubElement(item_elem, "link").text = item.url
 
-            # Description
-            description_text = item.content_meta.get("description", "")
-            if not description_text and item.content_text:
-                description_text = item.content_text[:500] + "..." if len(item.content_text) > 500 else item.content_text
+            # Description (enhanced with summary, link, images)
+            description_text = build_enhanced_description(
+                content_text=item.content_text or "",
+                content_meta=item.content_meta or {},
+                url=item.url,
+            )
             ET.SubElement(item_elem, "description").text = description_text
 
             # Publication date (RFC 822 format)
@@ -324,11 +395,12 @@ class RSSGenerator:
             ET.SubElement(item_elem, "title").text = f"[{source_name}] {item_data['title']}"
             ET.SubElement(item_elem, "link").text = item_data["url"]
 
-            # Description
-            description_text = item_data["content_meta"].get("description", "")
-            if not description_text and item_data["content_text"]:
-                content = item_data["content_text"]
-                description_text = content[:500] + "..." if len(content) > 500 else content
+            # Description (enhanced with summary, link, images)
+            description_text = build_enhanced_description(
+                content_text=item_data["content_text"] or "",
+                content_meta=item_data["content_meta"] or {},
+                url=item_data["url"],
+            )
             ET.SubElement(item_elem, "description").text = description_text
 
             # Publication date

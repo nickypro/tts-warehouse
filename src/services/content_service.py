@@ -119,6 +119,7 @@ class ContentService:
                     "author": article.author,
                     "description": article.description,
                     "image_url": article.image_url,
+                    "image_urls": article.image_urls or [],
                 },
                 published_at=article.published_at or datetime.utcnow(),
             )
@@ -451,6 +452,145 @@ class ContentService:
             "source_id": source_id,
             "new_items": new_items,
             "message": f"Found {new_items} new items" if new_items else "No new items found",
+        }
+
+    def reparse_source(
+        self,
+        source_id: int,
+        update_images: bool = True,
+        generate_summaries: bool = False,
+    ) -> dict:
+        """
+        Re-parse all items in a source to update metadata.
+
+        Args:
+            source_id: ID of the source to reparse
+            update_images: Re-fetch pages to extract image URLs
+            generate_summaries: Generate AI summaries (costs API credits)
+
+        Returns:
+            Dict with reparse results
+        """
+        from src.services.summary_service import generate_summary
+
+        with db_session() as session:
+            source = SourceRepository.get_by_id(session, source_id)
+            if not source:
+                raise ValueError(f"Source {source_id} not found")
+
+            source_type = source.type
+            items = ItemRepository.get_by_source(session, source_id)
+            item_data = [(i.id, i.url, i.content_text, i.content_meta) for i in items]
+
+        updated = 0
+        failed = 0
+        summaries_generated = 0
+
+        for item_id, item_url, content_text, existing_meta in item_data:
+            try:
+                meta = existing_meta or {}
+                needs_update = False
+
+                # Update images if requested
+                if update_images and (source_type == SourceType.ARTICLE or source_type == SourceType.RSS_FEED):
+                    article = self.article_parser.parse(item_url)
+                    meta["image_urls"] = article.image_urls or []
+                    if article.image_url:
+                        meta["image_url"] = article.image_url
+                    if article.description:
+                        meta["description"] = article.description
+                    if article.author:
+                        meta["author"] = article.author
+                    needs_update = True
+
+                # Generate summary if requested and not already present
+                if generate_summaries and content_text:
+                    if not meta.get("summary"):
+                        summary = generate_summary(content_text)
+                        if summary:
+                            meta["summary"] = summary
+                            summaries_generated += 1
+                            needs_update = True
+
+                if needs_update:
+                    with db_session() as session:
+                        item = ItemRepository.get_by_id(session, item_id)
+                        if item:
+                            item.content_meta = meta
+                            session.commit()
+                            updated += 1
+
+            except Exception as e:
+                logger.error(f"Failed to reparse item {item_id}: {e}")
+                failed += 1
+
+        return {
+            "source_id": source_id,
+            "updated": updated,
+            "failed": failed,
+            "summaries_generated": summaries_generated,
+            "message": f"Updated {updated} items" + (f", {failed} failed" if failed else ""),
+        }
+
+    def generate_summaries_for_source(self, source_id: int, overwrite: bool = False) -> dict:
+        """
+        Generate AI summaries for all items in a source.
+
+        Args:
+            source_id: ID of the source
+            overwrite: If True, regenerate even if summary exists
+
+        Returns:
+            Dict with results
+        """
+        from src.services.summary_service import generate_summary
+
+        with db_session() as session:
+            source = SourceRepository.get_by_id(session, source_id)
+            if not source:
+                raise ValueError(f"Source {source_id} not found")
+
+            items = ItemRepository.get_by_source(session, source_id)
+            item_data = [(i.id, i.content_text, i.content_meta) for i in items]
+
+        generated = 0
+        skipped = 0
+        failed = 0
+
+        for item_id, content_text, existing_meta in item_data:
+            meta = existing_meta or {}
+
+            # Skip if already has summary and not overwriting
+            if meta.get("summary") and not overwrite:
+                skipped += 1
+                continue
+
+            if not content_text:
+                skipped += 1
+                continue
+
+            try:
+                summary = generate_summary(content_text)
+                if summary:
+                    meta["summary"] = summary
+                    with db_session() as session:
+                        item = ItemRepository.get_by_id(session, item_id)
+                        if item:
+                            item.content_meta = meta
+                            session.commit()
+                            generated += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Failed to generate summary for item {item_id}: {e}")
+                failed += 1
+
+        return {
+            "source_id": source_id,
+            "generated": generated,
+            "skipped": skipped,
+            "failed": failed,
+            "message": f"Generated {generated} summaries, skipped {skipped}" + (f", {failed} failed" if failed else ""),
         }
 
     def preview_article(self, url: str) -> dict:

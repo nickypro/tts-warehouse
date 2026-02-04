@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8000"
     debug: bool = False
 
+    # OpenRouter (for summaries)
+    openrouter_api_key: str = ""
+    summary_model: str = "google/gemini-2.0-flash-001"
+
     # Database
     database_path: str = "./data/db.sqlite"
 

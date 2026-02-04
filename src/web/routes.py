@@ -148,7 +148,7 @@ async def delete_source(source_id: int):
 async def refresh_source(source_id: int):
     """
     Refresh a source to check for new items.
-    
+
     For RSS feeds and Royal Road books, this re-parses the source
     and adds any new items that weren't previously imported.
     """
@@ -160,6 +160,62 @@ async def refresh_source(source_id: int):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to refresh source {source_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/sources/{source_id}/reparse")
+async def reparse_source(
+    source_id: int,
+    images: bool = Query(True, description="Re-fetch pages to extract image URLs"),
+    summaries: bool = Query(False, description="Generate AI summaries (costs API credits)"),
+):
+    """
+    Re-parse all items in a source to update metadata.
+
+    This re-fetches each item's URL and extracts updated metadata
+    (like image URLs). Does not regenerate TTS audio.
+
+    Query params:
+    - images: Update image URLs (default: true)
+    - summaries: Generate AI summaries (default: false, costs API credits)
+    """
+    try:
+        service = get_content_service()
+        result = service.reparse_source(
+            source_id,
+            update_images=images,
+            generate_summaries=summaries,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to reparse source {source_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/sources/{source_id}/generate-summaries")
+async def generate_summaries(
+    source_id: int,
+    overwrite: bool = Query(False, description="Overwrite existing summaries"),
+):
+    """
+    Generate AI summaries for all items in a source.
+
+    This only generates summaries, doesn't re-fetch content.
+    Summaries are cached in the database.
+
+    Query params:
+    - overwrite: Regenerate even if summary exists (default: false)
+    """
+    try:
+        service = get_content_service()
+        result = service.generate_summaries_for_source(source_id, overwrite=overwrite)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to generate summaries for source {source_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

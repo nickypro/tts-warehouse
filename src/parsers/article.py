@@ -26,6 +26,7 @@ class ParsedArticle:
     published_at: Optional[datetime] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
+    image_urls: Optional[list] = None  # All images from content
 
 
 class ArticleParser:
@@ -64,8 +65,8 @@ class ArticleParser:
         description = self._extract_description(soup)
         image_url = self._extract_image(soup, url)
 
-        # Extract main content
-        text = self._extract_content(soup)
+        # Extract main content and images
+        text, image_urls = self._extract_content_and_images(soup, url)
 
         if not text:
             # Fallback: try using newspaper3k
@@ -82,6 +83,7 @@ class ArticleParser:
             published_at=published_at,
             description=description,
             image_url=image_url,
+            image_urls=image_urls,
         )
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
@@ -170,8 +172,10 @@ class ArticleParser:
 
         return None
 
-    def _extract_content(self, soup: BeautifulSoup) -> str:
-        """Extract main article content."""
+    def _extract_content_and_images(self, soup: BeautifulSoup, base_url: str) -> tuple:
+        """Extract main article content and image URLs."""
+        from urllib.parse import urljoin
+
         # Remove unwanted elements
         for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside", "form"]):
             tag.decompose()
@@ -189,19 +193,35 @@ class ArticleParser:
             "main",
         ]
 
+        content_elem = None
         for selector in content_selectors:
             content = soup.select_one(selector)
             if content:
                 text = self._clean_text(content.get_text(separator="\n"))
                 if len(text) > 200:  # Minimum content threshold
-                    return text
+                    content_elem = content
+                    break
 
-        # Fallback: get body text
-        body = soup.find("body")
-        if body:
-            return self._clean_text(body.get_text(separator="\n"))
+        # Fallback: get body
+        if not content_elem:
+            content_elem = soup.find("body")
 
-        return ""
+        if not content_elem:
+            return "", []
+
+        text = self._clean_text(content_elem.get_text(separator="\n"))
+
+        # Extract image URLs from content
+        image_urls = []
+        for img in content_elem.find_all("img"):
+            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+            if src:
+                # Make absolute URL
+                absolute_url = urljoin(base_url, src)
+                if absolute_url not in image_urls:
+                    image_urls.append(absolute_url)
+
+        return text, image_urls
 
     def _clean_text(self, text: str) -> str:
         """Clean extracted text."""
