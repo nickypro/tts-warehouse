@@ -12,6 +12,33 @@ from src.database import db_session, Source, Item, ItemRepository, ItemStatus, S
 
 logger = logging.getLogger(__name__)
 
+# TTS speaking rate: ~150 words/min, ~5 chars/word = ~750 chars/min
+CHARS_PER_MINUTE = 750
+
+
+def estimate_duration_from_text(text: str, round_to: int = 5) -> int:
+    """
+    Estimate audio duration in seconds from text character count.
+
+    Args:
+        text: The text content
+        round_to: Round to nearest N minutes (1 or 5)
+
+    Returns:
+        Estimated duration in seconds, rounded to nearest minute or 5 minutes
+    """
+    if not text:
+        return 60  # Default 1 minute if no text
+
+    char_count = len(text)
+    estimated_minutes = char_count / CHARS_PER_MINUTE
+
+    # Round to nearest N minutes
+    rounded_minutes = round(estimated_minutes / round_to) * round_to
+
+    # Minimum 1 minute
+    return max(int(rounded_minutes * 60), 60)
+
 
 class RSSGenerator:
     """Generator for podcast RSS feeds."""
@@ -172,13 +199,18 @@ class RSSGenerator:
             enclosure.set("length", str(file_size) if file_size > 0 else "1000000")
             enclosure.set("type", "audio/mpeg")
 
-            # iTunes duration (estimate based on file size or placeholder)
-            # Rough estimate: 192kbps = 24KB/s, so duration = size / 24000
+            # iTunes duration
             if file_size > 0:
+                # Actual file: estimate from file size (192kbps = 24KB/s)
                 estimated_duration = file_size // 24000
             else:
-                # Placeholder: estimate ~10 minutes for chapters without audio yet
-                estimated_duration = 600
+                # No audio yet: estimate from text length
+                # Round to 5 min for longer content (>10 min), 1 min for shorter
+                text = item.content_text or ""
+                raw_estimate = len(text) / CHARS_PER_MINUTE
+                round_to = 5 if raw_estimate > 10 else 1
+                estimated_duration = estimate_duration_from_text(text, round_to)
+
             minutes, seconds = divmod(estimated_duration, 60)
             hours, minutes = divmod(minutes, 60)
             if hours:
@@ -330,9 +362,15 @@ class RSSGenerator:
 
             # iTunes duration
             if file_size > 0:
+                # Actual file: estimate from file size (192kbps = 24KB/s)
                 estimated_duration = file_size // 24000
             else:
-                estimated_duration = 600
+                # No audio yet: estimate from text length
+                text = item_data["content_text"] or ""
+                raw_estimate = len(text) / CHARS_PER_MINUTE
+                round_to = 5 if raw_estimate > 10 else 1
+                estimated_duration = estimate_duration_from_text(text, round_to)
+
             minutes, seconds = divmod(estimated_duration, 60)
             hours, minutes = divmod(minutes, 60)
             if hours:
