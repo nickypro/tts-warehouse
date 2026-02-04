@@ -203,3 +203,139 @@ class RSSGenerator:
         """Get the public URL for a feed."""
         base_url = self.settings.base_url.rstrip("/")
         return f"{base_url}/feeds/{slug}.xml"
+
+    def generate_unified_feed(self) -> str:
+        """
+        Generate a unified RSS feed combining all sources.
+        Each item includes an icon based on its source.
+
+        Returns:
+            Path to the generated RSS file
+        """
+        base_url = self.settings.base_url.rstrip("/")
+
+        with db_session() as session:
+            sources = SourceRepository.get_all(session)
+
+            # Build a map of source_id -> source info
+            source_map = {}
+            for source in sources:
+                source_map[source.id] = {
+                    "name": source.name,
+                    "slug": source.slug,
+                    "icon_url": f"{base_url}/icons/{source.slug}.png",
+                }
+
+            # Get all items from all sources, extract data while in session
+            all_items = []
+            for source in sources:
+                items = ItemRepository.get_by_source(session, source.id)
+                for item in items:
+                    # Extract all needed data while in session
+                    all_items.append({
+                        "id": item.id,
+                        "title": item.title,
+                        "url": item.url,
+                        "content_text": item.content_text,
+                        "content_meta": item.content_meta or {},
+                        "audio_path": item.audio_path,
+                        "published_at": item.published_at,
+                        "source_name": source_map[source.id]["name"],
+                        "source_icon": source_map[source.id]["icon_url"],
+                    })
+
+        # Sort by published date (newest first)
+        all_items.sort(
+            key=lambda x: x["published_at"] or datetime.min,
+            reverse=True
+        )
+
+        # Create RSS structure
+        rss = ET.Element("rss", version="2.0")
+        rss.set("xmlns:itunes", "http://www.itunes.com/dtds/podcast-1.0.dtd")
+        rss.set("xmlns:content", "http://purl.org/rss/1.0/modules/content/")
+
+        channel = ET.SubElement(rss, "channel")
+
+        # Channel metadata
+        ET.SubElement(channel, "title").text = "TTS Warehouse - All Feeds"
+        ET.SubElement(channel, "link").text = base_url
+        ET.SubElement(channel, "description").text = "Unified feed combining all TTS Warehouse sources"
+        ET.SubElement(channel, "language").text = "en-us"
+        ET.SubElement(channel, "generator").text = "TTS Warehouse"
+
+        # iTunes metadata
+        ET.SubElement(channel, "itunes:author").text = "TTS Warehouse"
+        ET.SubElement(channel, "itunes:summary").text = "Unified feed combining all TTS Warehouse sources"
+
+        # Add items
+        for item_data in all_items:
+            source_name = item_data["source_name"]
+            source_icon = item_data["source_icon"]
+
+            item_elem = ET.SubElement(channel, "item")
+
+            # Prefix title with source name
+            ET.SubElement(item_elem, "title").text = f"[{source_name}] {item_data['title']}"
+            ET.SubElement(item_elem, "link").text = item_data["url"]
+
+            # Description
+            description_text = item_data["content_meta"].get("description", "")
+            if not description_text and item_data["content_text"]:
+                content = item_data["content_text"]
+                description_text = content[:500] + "..." if len(content) > 500 else content
+            ET.SubElement(item_elem, "description").text = description_text
+
+            # Publication date
+            if item_data["published_at"]:
+                pub_date = item_data["published_at"].strftime("%a, %d %b %Y %H:%M:%S +0000")
+            else:
+                pub_date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+            ET.SubElement(item_elem, "pubDate").text = pub_date
+
+            # GUID
+            ET.SubElement(item_elem, "guid", isPermaLink="false").text = f"tts-warehouse-{item_data['id']}"
+
+            # Audio enclosure
+            audio_url = f"{base_url}/audio/{item_data['id']}.mp3"
+            file_size = 0
+            if item_data["audio_path"]:
+                audio_path = Path(item_data["audio_path"])
+                try:
+                    file_size = audio_path.stat().st_size
+                except OSError:
+                    pass
+
+            enclosure = ET.SubElement(item_elem, "enclosure")
+            enclosure.set("url", audio_url)
+            enclosure.set("length", str(file_size) if file_size > 0 else "1000000")
+            enclosure.set("type", "audio/mpeg")
+
+            # iTunes image for this item (source-specific icon)
+            itunes_image = ET.SubElement(item_elem, "itunes:image")
+            itunes_image.set("href", source_icon)
+
+            # iTunes duration
+            if file_size > 0:
+                estimated_duration = file_size // 24000
+            else:
+                estimated_duration = 600
+            minutes, seconds = divmod(estimated_duration, 60)
+            hours, minutes = divmod(minutes, 60)
+            if hours:
+                duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                duration_str = f"{minutes}:{seconds:02d}"
+            ET.SubElement(item_elem, "itunes:duration").text = duration_str
+
+        # Write to file
+        feeds_dir = Path(self.settings.database_path).parent / "feeds"
+        feeds_dir.mkdir(parents=True, exist_ok=True)
+
+        output_path = feeds_dir / "all.xml"
+
+        tree = ET.ElementTree(rss)
+        tree.write(str(output_path), encoding="utf-8", xml_declaration=True)
+
+        logger.info(f"Generated unified RSS feed: {output_path}")
+        return str(output_path)

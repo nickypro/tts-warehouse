@@ -178,7 +178,7 @@ async function viewSourceDetail(sourceId) {
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span class="item-status ${item.status}">${item.status}</span>
-                            ${item.audio_url ? `<button class="btn btn-small btn-secondary" onclick="playAudio('${item.audio_url}', '${item.title.replace(/'/g, "\\'")}')">▶ Play</button>` : ''}
+                            ${item.audio_url ? `<a href="${item.audio_url}" target="_blank" class="btn btn-small btn-secondary">Play</a>` : ''}
                             ${item.status === 'pending' ? `<button class="btn btn-small btn-primary" onclick="processItem(${item.id})">Process</button>` : ''}
                         </div>
                     </div>
@@ -200,16 +200,6 @@ async function processItem(itemId) {
     }
 }
 
-function playAudio(url, title) {
-    const player = document.getElementById('audio-player');
-    const audio = document.getElementById('audio-element');
-    const titleEl = document.getElementById('audio-player-title');
-
-    player.classList.remove('hidden');
-    titleEl.textContent = title;
-    audio.src = url;
-    audio.play();
-}
 
 // --- Add Article ---
 

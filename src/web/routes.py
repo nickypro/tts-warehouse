@@ -18,6 +18,7 @@ from src.database import (
 from src.services.content_service import ContentService
 from src.services.job_queue import get_job_queue
 from src.services.rss_generator import RSSGenerator
+from src.services.icon_generator import generate_letter_icon
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +378,36 @@ async def list_feeds():
         }
         for s in sources
     ]
+
+
+@router.get("/icons/{slug}.png")
+async def get_source_icon(slug: str):
+    """Generate and serve a source icon."""
+    with db_session() as session:
+        source = SourceRepository.get_by_slug(session, slug)
+        if not source:
+            raise HTTPException(status_code=404, detail="Source not found")
+        source_name = source.name
+
+    # Generate icon
+    icon_bytes = generate_letter_icon(source_name)
+    return Response(
+        content=icon_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},  # Cache for 1 day
+    )
+
+
+@router.get("/feeds/all.xml")
+async def get_unified_feed():
+    """Serve the unified RSS feed combining all sources."""
+    generator = get_rss_generator()
+    try:
+        feed_path = generator.generate_unified_feed()
+        return FileResponse(feed_path, media_type="application/rss+xml")
+    except Exception as e:
+        logger.error(f"Failed to generate unified feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/feeds/{slug}.xml")
