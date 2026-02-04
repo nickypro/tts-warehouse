@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Warehouse</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1>📻 TTS Warehouse</h1>
+            <p class="subtitle">Convert articles, feeds & books to audio podcasts</p>
+        </header>
+
+        <nav class="nav">
+            <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+            <button class="nav-btn" data-view="add-article">+ Article</button>
+            <button class="nav-btn" data-view="add-feed">+ RSS Feed</button>
+            <button class="nav-btn" data-view="add-royalroad">+ Royal Road</button>
+        </nav>
+
+        <main class="main">
+            <!-- Dashboard View -->
+            <section id="dashboard-view" class="view active">
+                <div class="section-header">
+                    <h2>Your Feeds</h2>
+                    <div class="queue-status" id="queue-status"></div>
+                </div>
+
+                <div class="sources-list" id="sources-list">
+                    <p class="loading">Loading sources...</p>
+                </div>
+            </section>
+
+            <!-- Add Article View -->
+            <section id="add-article-view" class="view">
+                <h2>Add Article</h2>
+                <p class="description">Paste any article URL to convert it to audio.</p>
+
+                <form id="article-form" class="form">
+                    <div class="form-group">
+                        <label for="article-url">Article URL</label>
+                        <input type="url" id="article-url" placeholder="https://example.com/article" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="article-name">Name (optional)</label>
+                        <input type="text" id="article-name" placeholder="Custom name for this source">
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="preview-article-btn">Preview</button>
+                    <button type="submit" class="btn btn-primary">Add Article</button>
+                </form>
+
+                <div id="article-preview" class="preview hidden"></div>
+            </section>
+
+            <!-- Add RSS Feed View -->
+            <section id="add-feed-view" class="view">
+                <h2>Add RSS Feed</h2>
+                <p class="description">Subscribe to an RSS or Substack feed for automatic conversion.</p>
+
+                <form id="feed-form" class="form">
+                    <div class="form-group">
+                        <label for="feed-url">Feed URL</label>
+                        <input type="url" id="feed-url" placeholder="https://example.com/feed.xml" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="feed-name">Name (optional)</label>
+                        <input type="text" id="feed-name" placeholder="Custom name for this feed">
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="preview-feed-btn">Preview</button>
+                    <button type="submit" class="btn btn-primary">Add Feed</button>
+                </form>
+
+                <div id="feed-preview" class="preview hidden"></div>
+            </section>
+
+            <!-- Add Royal Road View -->
+            <section id="add-royalroad-view" class="view">
+                <h2>Add Royal Road Book</h2>
+                <p class="description">Convert a Royal Road web novel to an audiobook feed.</p>
+
+                <form id="royalroad-form" class="form">
+                    <div class="form-group">
+                        <label for="royalroad-url">Book URL</label>
+                        <input type="url" id="royalroad-url" placeholder="https://www.royalroad.com/fiction/12345/book-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="royalroad-name">Name (optional)</label>
+                        <input type="text" id="royalroad-name" placeholder="Custom name for this book">
+                    </div>
+                    <div class="form-group">
+                        <label for="royalroad-max">Max Chapters (optional)</label>
+                        <input type="number" id="royalroad-max" placeholder="Leave empty for all chapters" min="1">
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="preview-royalroad-btn">Preview</button>
+                    <button type="submit" class="btn btn-primary">Add Book</button>
+                </form>
+
+                <div id="royalroad-preview" class="preview hidden"></div>
+            </section>
+
+            <!-- Source Detail View -->
+            <section id="source-detail-view" class="view">
+                <button class="btn btn-secondary back-btn" id="back-to-dashboard">← Back</button>
+                <div id="source-detail"></div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p>TTS Warehouse • <a href="/docs" target="_blank">API Docs</a></p>
+        </footer>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
