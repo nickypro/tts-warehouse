@@ -45,6 +45,9 @@ class Settings(BaseSettings):
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
+    # Auth (optional - leave empty to disable)
+    admin_password: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

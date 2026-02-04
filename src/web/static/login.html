@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - TTS Warehouse</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 80vh;
+        }
+        .login-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 320px;
+        }
+        .login-box h2 {
+            margin: 0 0 1.5rem 0;
+            text-align: center;
+        }
+        .login-box .form-group {
+            margin-bottom: 1rem;
+        }
+        .login-box input[type="password"] {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .login-box button {
+            width: 100%;
+        }
+        .error-msg {
+            color: var(--error);
+            text-align: center;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1>TTS Warehouse</h1>
+        </header>
+
+        <div class="login-container">
+            <div class="login-box">
+                <h2>Login</h2>
+                <div id="error" class="error-msg" style="display: none;"></div>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required autofocus>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('error');
+
+            try {
+                const res = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `password=${encodeURIComponent(password)}`
+                });
+
+                if (res.ok) {
+                    window.location.href = '/';
+                } else {
+                    errorEl.textContent = 'Invalid password';
+                    errorEl.style.display = 'block';
+                }
+            } catch (err) {
+                errorEl.textContent = 'Login failed';
+                errorEl.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

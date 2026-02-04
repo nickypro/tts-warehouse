@@ -16,6 +16,7 @@ dependencies = [
     "newspaper3k>=0.2",
     "python-dotenv>=1.0",
     "aiofiles>=23.0",
+    "python-multipart>=0.0.22",
 ]
 
 [project.optional-dependencies]
