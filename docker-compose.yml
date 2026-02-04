@@ -1,0 +1,10 @@
+services:
+  tts-warehouse:
+    build: .
+    ports:
+      - "${WEB_PORT:-8775}:${WEB_PORT:-8775}"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
