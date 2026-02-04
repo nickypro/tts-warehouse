@@ -271,6 +271,16 @@ class RSSGenerator:
         ET.SubElement(channel, "itunes:author").text = "TTS Warehouse"
         ET.SubElement(channel, "itunes:summary").text = "Unified feed combining all TTS Warehouse sources"
 
+        # Feed image (radio icon)
+        feed_icon_url = f"{base_url}/icons/all.png"
+        image = ET.SubElement(channel, "image")
+        ET.SubElement(image, "url").text = feed_icon_url
+        ET.SubElement(image, "title").text = "TTS Warehouse - All Feeds"
+        ET.SubElement(image, "link").text = base_url
+
+        itunes_image = ET.SubElement(channel, "itunes:image")
+        itunes_image.set("href", feed_icon_url)
+
         # Add items
         for item_data in all_items:
             source_name = item_data["source_name"]

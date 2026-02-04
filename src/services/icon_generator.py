@@ -1,6 +1,7 @@
 """Generate simple letter icons for feeds."""
 
 import hashlib
+import math
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
@@ -61,6 +62,63 @@ def generate_letter_icon(name: str, size: int = 200) -> bytes:
     draw.text((x, y), letter, fill=(255, 255, 255), font=font)
 
     # Save to bytes
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+
+    return buffer.getvalue()
+
+
+def generate_radio_icon(size: int = 200) -> bytes:
+    """
+    Generate a radio/podcast tower icon.
+
+    Args:
+        size: Size of the square icon in pixels
+
+    Returns:
+        PNG image as bytes
+    """
+    # Purple/blue gradient-ish background
+    bg_color = (88, 86, 214)
+
+    img = Image.new('RGB', (size, size), bg_color)
+    draw = ImageDraw.Draw(img)
+
+    center_x = size // 2
+    center_y = size // 2 + size // 8
+
+    # Draw radio waves (arcs)
+    wave_color = (255, 255, 255)
+    for i, radius in enumerate([size // 6, size // 4, size // 3]):
+        # Left arc
+        bbox_left = (center_x - radius, center_y - radius, center_x, center_y + radius)
+        draw.arc(bbox_left, start=220, end=320, fill=wave_color, width=max(3, size // 50))
+        # Right arc
+        bbox_right = (center_x, center_y - radius, center_x + radius, center_y + radius)
+        draw.arc(bbox_right, start=220, end=320, fill=wave_color, width=max(3, size // 50))
+
+    # Draw antenna tower (triangle)
+    tower_width = size // 8
+    tower_height = size // 2
+    tower_top = center_y - tower_height // 2
+    tower_bottom = center_y + tower_height // 3
+
+    points = [
+        (center_x, tower_top),
+        (center_x - tower_width, tower_bottom),
+        (center_x + tower_width, tower_bottom),
+    ]
+    draw.polygon(points, fill=wave_color)
+
+    # Draw circle at top of antenna
+    dot_radius = size // 16
+    draw.ellipse(
+        (center_x - dot_radius, tower_top - dot_radius,
+         center_x + dot_radius, tower_top + dot_radius),
+        fill=wave_color
+    )
+
     buffer = BytesIO()
     img.save(buffer, format='PNG')
     buffer.seek(0)

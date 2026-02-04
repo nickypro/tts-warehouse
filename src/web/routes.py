@@ -18,7 +18,7 @@ from src.database import (
 from src.services.content_service import ContentService
 from src.services.job_queue import get_job_queue
 from src.services.rss_generator import RSSGenerator
-from src.services.icon_generator import generate_letter_icon
+from src.services.icon_generator import generate_letter_icon, generate_radio_icon
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +378,17 @@ async def list_feeds():
         }
         for s in sources
     ]
+
+
+@router.get("/icons/all.png")
+async def get_unified_feed_icon():
+    """Generate and serve the unified feed radio icon."""
+    icon_bytes = generate_radio_icon()
+    return Response(
+        content=icon_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/icons/{slug}.png")
