@@ -1,14 +1,16 @@
+![TTS Warehouse](./tts-warehouse.png)
+
 # TTS Warehouse
 
-A self-hosted application that converts articles, RSS feeds, and Royal Road books to TTS audio and generates podcast RSS feeds.
+A self-hosted application that converts articles, RSS feeds, and Royal Road books to TTS audio and generates podcast RSS feeds. Mostly written by Claude Opus 4.5.
 
 ## Features
 
 - **Single Article**: Add any URL, parse content, convert to audio
 - **RSS/Substack Feeds**: Subscribe to feeds and auto-convert new articles
-- **Royal Road Books**: Convert web novels to audiobook feeds
+- **Royal Road Books**: Convert web novels to audiobook feeds (not well tested)
 - **Smart Processing**: Eager mode for small sources (<10 items), lazy mode for large sources
-- **Multiple TTS Engines**: Unreal Speech (default), OpenAI TTS, or self-hosted Kokoro
+- **TTS Engines**: Unreal Speech (default, tested), could probably add other ones too like kokoro?
 
 ## Quick Start
 
@@ -33,7 +35,7 @@ cp env.example .env
 ### Run the Server
 
 ```bash
-uv run uvicorn src.main:app --reload
+uv run run.py --reload
 ```
 
 Open http://localhost:8000 in your browser.
@@ -55,6 +57,7 @@ Edit `.env` to configure:
 - `TTS_VOICE_ID`: Voice to use for TTS
 - `BASE_URL`: Public URL where the server is hosted (for RSS feeds)
 - `LAZY_THRESHOLD`: Number of items above which lazy processing is used (default: 10)
+- `ADMIN_PASSWORD`: Lock creating new feeds behind a password (probably desireable).
 
 ## License
 
