@@ -1,6 +1,7 @@
 """FastAPI routes for the TTS Warehouse API."""
 
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,7 @@ from src.database import (
     SourceRepository,
     ItemRepository,
     ItemStatus,
+    SourceType,
 )
 from src.services.content_service import ContentService
 from src.services.job_queue import get_job_queue
@@ -21,6 +23,9 @@ from src.services.rss_generator import RSSGenerator
 from src.services.icon_generator import generate_letter_icon, generate_radio_icon
 
 logger = logging.getLogger(__name__)
+
+# Auto-refresh threshold: refresh sources if older than this
+AUTO_REFRESH_THRESHOLD = timedelta(minutes=30)
 
 router = APIRouter()
 
@@ -63,6 +68,32 @@ def get_content_service() -> ContentService:
 
 def get_rss_generator() -> RSSGenerator:
     return RSSGenerator()
+
+
+def _should_auto_refresh(source) -> bool:
+    """Check if a source should be auto-refreshed based on last refresh time."""
+    # Only auto-refresh RSS feeds and Royal Road books
+    if source.type == SourceType.ARTICLE:
+        return False
+
+    if not source.last_refreshed_at:
+        # Never refreshed, should refresh
+        return True
+
+    time_since_refresh = datetime.utcnow() - source.last_refreshed_at
+    return time_since_refresh > AUTO_REFRESH_THRESHOLD
+
+
+def _auto_refresh_source(source_id: int) -> None:
+    """Auto-refresh a source if enough time has passed."""
+    try:
+        service = get_content_service()
+        result = service.refresh_source(source_id)
+        if result["new_items"] > 0:
+            logger.info(f"Auto-refresh: {result['message']} for source {source_id}")
+    except Exception as e:
+        # Log but don't fail the feed request
+        logger.warning(f"Auto-refresh failed for source {source_id}: {e}")
 
 
 # --- Source Endpoints ---
@@ -468,6 +499,16 @@ async def get_source_icon(slug: str):
 @router.get("/feeds/all.xml")
 async def get_unified_feed():
     """Serve the unified RSS feed combining all sources."""
+    # Auto-refresh all sources that need it
+    with db_session() as session:
+        sources = SourceRepository.get_all(session)
+        sources_to_refresh = [
+            s.id for s in sources if _should_auto_refresh(s)
+        ]
+
+    for source_id in sources_to_refresh:
+        _auto_refresh_source(source_id)
+
     generator = get_rss_generator()
     try:
         feed_path = generator.generate_unified_feed()
@@ -485,6 +526,11 @@ async def get_feed(slug: str):
         if not source:
             raise HTTPException(status_code=404, detail="Feed not found")
         source_id = source.id
+        should_refresh = _should_auto_refresh(source)
+
+    # Auto-refresh if enough time has passed
+    if should_refresh:
+        _auto_refresh_source(source_id)
 
     # Generate/update the feed
     generator = get_rss_generator()
