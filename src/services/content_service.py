@@ -99,6 +99,10 @@ class ContentService:
         # Parse the article
         article = self.article_parser.parse(url)
 
+        # Generate summary for the article
+        from src.services.summary_service import generate_summary
+        summary = generate_summary(article.text)
+
         with db_session() as session:
             # Get or create the unified articles source
             source = self._get_or_create_manual_articles_source(session)
@@ -108,19 +112,23 @@ class ContentService:
                 logger.info(f"Article already exists: {url}")
                 return source_to_dict(source, self.base_url)
 
-            # Create item
+            # Create item with summary
+            content_meta = {
+                "author": article.author,
+                "description": article.description,
+                "image_url": article.image_url,
+                "image_urls": article.image_urls or [],
+            }
+            if summary:
+                content_meta["summary"] = summary
+
             item = ItemRepository.create(
                 session,
                 source_id=source.id,
                 title=name or article.title,
                 url=url,
                 content_text=article.text,
-                content_meta={
-                    "author": article.author,
-                    "description": article.description,
-                    "image_url": article.image_url,
-                    "image_urls": article.image_urls or [],
-                },
+                content_meta=content_meta,
                 published_at=article.published_at or datetime.utcnow(),
             )
 
@@ -166,6 +174,15 @@ class ContentService:
             else ProcessingMode.EAGER
         )
 
+        # Generate summaries for all items
+        from src.services.summary_service import generate_summary
+        item_summaries = {}
+        for feed_item in feed.items:
+            if feed_item.content:
+                summary = generate_summary(feed_item.content)
+                if summary:
+                    item_summaries[feed_item.url] = summary
+
         with db_session() as session:
             # Create source
             source = SourceRepository.create(
@@ -181,16 +198,20 @@ class ContentService:
             # Create items
             item_ids = []
             for feed_item in feed.items:
+                content_meta = {
+                    "author": feed_item.author,
+                    "description": feed_item.description,
+                }
+                if feed_item.url in item_summaries:
+                    content_meta["summary"] = item_summaries[feed_item.url]
+
                 item = ItemRepository.create(
                     session,
                     source_id=source.id,
                     title=feed_item.title,
                     url=feed_item.url,
                     content_text=feed_item.content,
-                    content_meta={
-                        "author": feed_item.author,
-                        "description": feed_item.description,
-                    },
+                    content_meta=content_meta,
                     published_at=feed_item.published_at,
                 )
                 item_ids.append(item.id)
@@ -385,25 +406,46 @@ class ContentService:
         if source_type == SourceType.RSS_FEED:
             # Re-parse RSS feed
             feed = self.rss_parser.parse(source_url, fetch_content=True)
-            
+
+            # Find new items and generate summaries for them
+            from src.services.summary_service import generate_summary
+            new_feed_items = []
             with db_session() as session:
                 for feed_item in feed.items:
-                    # Check if item already exists (by URL)
                     if not ItemRepository.exists_by_url(session, source_id, feed_item.url):
+                        new_feed_items.append(feed_item)
+
+            # Generate summaries for new items (outside db session to avoid long transactions)
+            item_summaries = {}
+            for feed_item in new_feed_items:
+                if feed_item.content:
+                    summary = generate_summary(feed_item.content)
+                    if summary:
+                        item_summaries[feed_item.url] = summary
+
+            # Create the new items
+            with db_session() as session:
+                for feed_item in new_feed_items:
+                    # Double-check it still doesn't exist
+                    if not ItemRepository.exists_by_url(session, source_id, feed_item.url):
+                        content_meta = {
+                            "author": feed_item.author,
+                            "description": feed_item.description,
+                        }
+                        if feed_item.url in item_summaries:
+                            content_meta["summary"] = item_summaries[feed_item.url]
+
                         item = ItemRepository.create(
                             session,
                             source_id=source_id,
                             title=feed_item.title,
                             url=feed_item.url,
                             content_text=feed_item.content,
-                            content_meta={
-                                "author": feed_item.author,
-                                "description": feed_item.description,
-                            },
+                            content_meta=content_meta,
                             published_at=feed_item.published_at,
                         )
                         new_items += 1
-                        
+
                         # Queue for TTS if eager mode
                         if processing_mode == ProcessingMode.EAGER:
                             job_queue = get_job_queue()
