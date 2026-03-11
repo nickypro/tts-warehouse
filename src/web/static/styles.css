@@ -152,6 +152,46 @@ body {
     gap: 12px;
 }
 
+/* Unified Feed Card */
+.unified-card {
+    background: linear-gradient(135deg, #1a2332, #1e2a3a);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.unified-info h2 {
+    font-size: 1.4rem;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.unified-meta {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+.unified-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 1;
+    max-width: 500px;
+}
+
+.unified-actions .feed-url {
+    flex: 1;
+}
+
 /* Sources List */
 .sources-list {
     display: flex;
@@ -388,6 +428,54 @@ body {
 .processing-mode.lazy {
     background: var(--warning);
     color: white;
+}
+
+.processing-mode.new_only {
+    background: var(--accent);
+    color: white;
+}
+
+.processing-mode.clickable {
+    cursor: pointer;
+}
+
+.processing-mode.clickable:hover {
+    opacity: 0.8;
+}
+
+/* Feed toggle button */
+.btn-feed-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.btn-feed-toggle:hover {
+    background: var(--bg-hover);
+}
+
+.btn-feed-toggle.excluded {
+    opacity: 0.5;
+}
+
+/* Excluded source */
+.source-card.excluded-source {
+    opacity: 0.6;
+}
+
+/* Login button in header */
+.header {
+    position: relative;
+}
+
+#login-btn {
+    position: absolute;
+    top: 40px;
+    right: 0;
 }
 
 /* Source Detail */

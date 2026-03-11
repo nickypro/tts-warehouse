@@ -320,8 +320,8 @@ class RSSGenerator:
         with db_session() as session:
             sources = SourceRepository.get_all(session)
 
-            # Filter out books (Royal Road) from unified feed
-            sources = [s for s in sources if s.type != SourceType.ROYAL_ROAD]
+            # Filter out books (Royal Road) and sources excluded from unified feed
+            sources = [s for s in sources if s.type != SourceType.ROYAL_ROAD and s.in_feed is not False]
 
             # Build a map of source_id -> source info
             source_map = {}

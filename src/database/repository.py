@@ -78,6 +78,21 @@ def init_db():
     """Initialize the database (create tables)."""
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
+
+    # Migrations for existing databases
+    with engine.connect() as conn:
+        # Add in_feed column to sources table if missing
+        try:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE sources ADD COLUMN in_feed BOOLEAN DEFAULT 1"
+                )
+            )
+            conn.commit()
+            logger.info("Added in_feed column to sources table")
+        except Exception:
+            pass  # Column already exists
+
     logger.info("Database tables created")
 
 
@@ -152,13 +167,10 @@ class SourceRepository:
 
     @staticmethod
     def update_item_count(session: Session, source_id: int, count: int):
-        """Update source item count and potentially processing mode."""
+        """Update source item count."""
         source = session.query(Source).filter(Source.id == source_id).first()
         if source:
             source.item_count = count
-            threshold = get_settings().lazy_threshold
-            if count >= threshold:
-                source.processing_mode = ProcessingMode.LAZY
             session.flush()
 
     @staticmethod

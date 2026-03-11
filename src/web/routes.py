@@ -1,11 +1,12 @@
 """FastAPI routes for the TTS Warehouse API."""
 
 import logging
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -16,6 +17,7 @@ from src.database import (
     ItemRepository,
     ItemStatus,
     SourceType,
+    ProcessingMode,
 )
 from src.services.content_service import ContentService
 from src.services.job_queue import get_job_queue
@@ -34,6 +36,38 @@ router = APIRouter()
 async def health():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@router.get("/api/auth/status")
+async def auth_status(request: Request):
+    """Check if the current user is authenticated."""
+    from src.web.auth import is_authenticated
+    settings = get_settings()
+    return {
+        "authenticated": is_authenticated(request),
+        "auth_required": bool(settings.admin_password),
+    }
+
+
+@router.get("/api/public/sources")
+async def public_sources():
+    """Public endpoint: list sources with limited info (no auth required)."""
+    settings = get_settings()
+    base_url = settings.base_url.rstrip("/")
+    with db_session() as session:
+        sources = SourceRepository.get_all(session)
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "slug": s.slug,
+                "type": s.type.value,
+                "item_count": s.item_count,
+                "feed_url": f"{base_url}/feeds/{s.slug}.xml",
+                "in_feed": s.in_feed if s.in_feed is not None else True,
+            }
+            for s in sources
+        ]
 
 
 # --- Request/Response Models ---
@@ -84,16 +118,32 @@ def _should_auto_refresh(source) -> bool:
     return time_since_refresh > AUTO_REFRESH_THRESHOLD
 
 
+def _enrich_in_background(item_ids: list) -> None:
+    """Run enrichment in a dedicated thread so it doesn't block the web server."""
+    def _run():
+        try:
+            service = get_content_service()
+            service.enrich_items(item_ids)
+        except Exception as e:
+            logger.error(f"Background enrichment failed: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _auto_refresh_source(source_id: int) -> None:
-    """Auto-refresh a source if enough time has passed."""
-    try:
-        service = get_content_service()
-        result = service.refresh_source(source_id)
-        if result["new_items"] > 0:
-            logger.info(f"Auto-refresh: {result['message']} for source {source_id}")
-    except Exception as e:
-        # Log but don't fail the feed request
-        logger.warning(f"Auto-refresh failed for source {source_id}: {e}")
+    """Auto-refresh a source in a background thread (non-blocking)."""
+    def _refresh():
+        try:
+            service = get_content_service()
+            result, new_item_ids = service.refresh_source(source_id)
+            if new_item_ids:
+                service.enrich_items(new_item_ids)
+            if result["new_items"] > 0:
+                logger.info(f"Auto-refresh: {result['message']} for source {source_id}")
+        except Exception as e:
+            logger.warning(f"Auto-refresh failed for source {source_id}: {e}")
+
+    threading.Thread(target=_refresh, daemon=True).start()
 
 
 # --- Source Endpoints ---
@@ -111,11 +161,15 @@ async def add_article(request: AddArticleRequest):
     """Add a single article as a source."""
     try:
         service = get_content_service()
-        source = service.add_article(request.url, request.name)
+        source, item_id = service.add_article(request.url, request.name)
+
+        # Enrich (summary + TTS) in background thread
+        if item_id is not None:
+            _enrich_in_background([item_id])
 
         return {
             **source,
-            "message": "Article added and queued for TTS processing",
+            "message": "Article added and queued for processing",
         }
     except Exception as e:
         logger.error(f"Failed to add article: {e}")
@@ -127,7 +181,11 @@ async def add_feed(request: AddFeedRequest):
     """Add an RSS feed as a source."""
     try:
         service = get_content_service()
-        source = service.add_rss_feed(request.url, request.name)
+        source, item_ids = service.add_rss_feed(request.url, request.name)
+
+        # Enrich (full content + summaries + TTS) in background thread
+        if item_ids:
+            _enrich_in_background(item_ids)
 
         return {
             **source,
@@ -182,16 +240,46 @@ async def refresh_source(source_id: int):
 
     For RSS feeds and Royal Road books, this re-parses the source
     and adds any new items that weren't previously imported.
+    Content enrichment (full text + summaries + TTS) happens in background.
     """
     try:
         service = get_content_service()
-        result = service.refresh_source(source_id)
+        result, new_item_ids = service.refresh_source(source_id)
+
+        # Enrich new items in background thread
+        if new_item_ids:
+            _enrich_in_background(new_item_ids)
+
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to refresh source {source_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class SetModeRequest(BaseModel):
+    mode: str
+
+
+@router.patch("/api/sources/{source_id}/mode")
+async def set_source_mode(source_id: int, request: SetModeRequest):
+    """Set processing mode for a source."""
+    try:
+        mode = ProcessingMode(request.mode)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode. Must be one of: {', '.join(m.value for m in ProcessingMode)}",
+        )
+
+    with db_session() as session:
+        source = SourceRepository.get_by_id(session, source_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="Source not found")
+        source.processing_mode = mode
+
+    return {"message": f"Processing mode set to {mode.value}", "mode": mode.value}
 
 
 @router.post("/api/sources/{source_id}/reparse")
@@ -368,6 +456,19 @@ async def process_item(item_id: int):
     job_queue.enqueue(item_id)
 
     return {"message": "Item queued for processing", "status": "pending"}
+
+
+@router.patch("/api/sources/{source_id}/in-feed")
+async def toggle_source_in_feed(source_id: int):
+    """Toggle whether a source is included in the unified podcast feed."""
+    with db_session() as session:
+        source = SourceRepository.get_by_id(session, source_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="Source not found")
+        source.in_feed = not (source.in_feed if source.in_feed is not None else True)
+        new_value = source.in_feed
+
+    return {"source_id": source_id, "in_feed": new_value}
 
 
 # --- Audio Endpoint (with lazy TTS trigger) ---

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -33,6 +34,7 @@ class ProcessingMode(str, Enum):
 
     EAGER = "eager"  # Process immediately
     LAZY = "lazy"  # Process on demand
+    NEW_ONLY = "new_only"  # Only process newly added items
 
 
 class ItemStatus(str, Enum):
@@ -56,6 +58,7 @@ class Source(Base):
     url = Column(String(2000), nullable=False)
     item_count = Column(Integer, default=0)
     processing_mode = Column(SQLEnum(ProcessingMode), default=ProcessingMode.EAGER)
+    in_feed = Column(Boolean, default=True)  # Include in unified podcast feed
     settings_json = Column(Text, default="{}")
     created_at = Column(DateTime, default=datetime.utcnow)
     last_refreshed_at = Column(DateTime, default=datetime.utcnow)

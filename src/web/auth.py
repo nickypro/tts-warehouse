@@ -69,6 +69,8 @@ PUBLIC_PATHS = (
     "/audio/",
     "/icons/",
     "/api/health",
+    "/api/auth/status",
+    "/api/public/sources",
     "/login",
     "/static/",
 )
@@ -76,4 +78,6 @@ PUBLIC_PATHS = (
 
 def is_public_path(path: str) -> bool:
     """Check if path is public (doesn't need auth)."""
+    if path == "/":
+        return True
     return any(path.startswith(p) for p in PUBLIC_PATHS)

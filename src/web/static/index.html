@@ -11,6 +11,7 @@
         <header class="header">
             <h1>📻 TTS Warehouse</h1>
             <p class="subtitle">Convert articles, feeds & books to audio podcasts</p>
+            <a href="/login" class="btn btn-small btn-secondary" id="login-btn" style="display:none;">Log in</a>
         </header>
 
         <nav class="nav">
@@ -23,10 +24,11 @@
         <main class="main">
             <!-- Dashboard View -->
             <section id="dashboard-view" class="view active">
+                <div id="unified-feed-card"></div>
+
                 <div class="section-header">
-                    <h2>Your Feeds</h2>
+                    <h2>Feeds</h2>
                     <div class="section-header-actions">
-                        <button class="btn btn-small btn-secondary" onclick="copyFeedUrl(window.location.origin + '/feeds/all.xml')">Copy Unified URL</button>
                         <div class="queue-status" id="queue-status"></div>
                     </div>
                 </div>

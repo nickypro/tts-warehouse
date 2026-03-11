@@ -1,8 +1,9 @@
 """Content service for managing sources and items."""
 
 import logging
+import threading
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from src.config import get_settings
 from src.database import (
@@ -31,6 +32,7 @@ def source_to_dict(source: Source, base_url: str) -> dict:
         "url": source.url,
         "item_count": source.item_count,
         "processing_mode": source.processing_mode.value,
+        "in_feed": source.in_feed if source.in_feed is not None else True,
         "settings": source.settings,
         "feed_url": f"{base_url}/feeds/{source.slug}.xml",
         "created_at": source.created_at.isoformat() if source.created_at else None,
@@ -83,25 +85,24 @@ class ContentService:
             processing_mode=ProcessingMode.EAGER,
         )
 
-    def add_article(self, url: str, name: Optional[str] = None) -> dict:
+    def add_article(self, url: str, name: Optional[str] = None) -> Tuple[dict, Optional[int]]:
         """
         Add a single article to the unified "Manually Added Articles" feed.
+
+        Returns immediately. Summary generation and TTS happen in background
+        via enrich_items().
 
         Args:
             url: URL of the article
             name: Optional custom title for the article (ignored, uses parsed title)
 
         Returns:
-            Created source as dict
+            Tuple of (source dict, item_id or None if duplicate)
         """
         logger.info(f"Adding article: {url}")
 
-        # Parse the article
+        # Parse the article (needed for title/content)
         article = self.article_parser.parse(url)
-
-        # Generate summary for the article
-        from src.services.summary_service import generate_summary
-        summary = generate_summary(article.text)
 
         with db_session() as session:
             # Get or create the unified articles source
@@ -110,17 +111,14 @@ class ContentService:
             # Check if article already exists
             if ItemRepository.exists_by_url(session, source.id, url):
                 logger.info(f"Article already exists: {url}")
-                return source_to_dict(source, self.base_url)
+                return source_to_dict(source, self.base_url), None
 
-            # Create item with summary
             content_meta = {
                 "author": article.author,
                 "description": article.description,
                 "image_url": article.image_url,
                 "image_urls": article.image_urls or [],
             }
-            if summary:
-                content_meta["summary"] = summary
 
             item = ItemRepository.create(
                 session,
@@ -138,33 +136,31 @@ class ContentService:
             item_id = item.id
             result = source_to_dict(source, self.base_url)
 
-        # Queue for TTS processing (eager mode)
-        job_queue = get_job_queue()
-        job_queue.enqueue(item_id)
-
-        return result
+        return result, item_id
 
     def add_rss_feed(
         self,
         feed_url: str,
         name: Optional[str] = None,
-        fetch_content: bool = True,
-    ) -> dict:
+    ) -> Tuple[dict, List[int]]:
         """
         Add an RSS feed as a source.
+
+        Returns immediately with feed-provided content only. Full article
+        fetching, summary generation, and TTS happen in background via
+        enrich_items().
 
         Args:
             feed_url: URL of the RSS feed
             name: Optional name for the source
-            fetch_content: Whether to fetch full content for items
 
         Returns:
-            Created source as dict
+            Tuple of (source dict, list of created item IDs)
         """
         logger.info(f"Adding RSS feed: {feed_url}")
 
-        # Parse the feed
-        feed = self.rss_parser.parse(feed_url, fetch_content=fetch_content)
+        # Parse the feed WITHOUT fetching full article content (fast)
+        feed = self.rss_parser.parse(feed_url, fetch_content=False)
 
         # Determine processing mode based on item count
         item_count = len(feed.items)
@@ -173,15 +169,6 @@ class ContentService:
             if item_count >= self.settings.lazy_threshold
             else ProcessingMode.EAGER
         )
-
-        # Generate summaries for all items
-        from src.services.summary_service import generate_summary
-        item_summaries = {}
-        for feed_item in feed.items:
-            if feed_item.content:
-                summary = generate_summary(feed_item.content)
-                if summary:
-                    item_summaries[feed_item.url] = summary
 
         with db_session() as session:
             # Create source
@@ -195,15 +182,13 @@ class ContentService:
                 settings={"image_url": feed.image_url, "description": feed.description},
             )
 
-            # Create items
+            # Create items with feed-provided content only
             item_ids = []
             for feed_item in feed.items:
                 content_meta = {
                     "author": feed_item.author,
                     "description": feed_item.description,
                 }
-                if feed_item.url in item_summaries:
-                    content_meta["summary"] = item_summaries[feed_item.url]
 
                 item = ItemRepository.create(
                     session,
@@ -218,18 +203,12 @@ class ContentService:
 
             result = source_to_dict(source, self.base_url)
 
-        # Queue for TTS processing if eager mode
-        if processing_mode == ProcessingMode.EAGER:
-            job_queue = get_job_queue()
-            for item_id in item_ids:
-                job_queue.enqueue(item_id)
-
         logger.info(
             f"Added RSS feed '{feed.title}' with {item_count} items "
             f"(mode: {processing_mode.value})"
         )
 
-        return result
+        return result, item_ids
 
     def add_royal_road_book(
         self,
@@ -375,9 +354,12 @@ class ContentService:
         with db_session() as session:
             return SourceRepository.delete(session, source_id)
 
-    def refresh_source(self, source_id: int) -> dict:
+    def refresh_source(self, source_id: int) -> Tuple[dict, List[int]]:
         """
         Refresh a source by checking for new items.
+
+        Returns immediately. Content fetching, summary generation, and TTS
+        happen in background via enrich_items().
 
         For RSS feeds: Re-parse the feed and add any new items.
         For Royal Road: Re-parse chapter list and add new chapters.
@@ -387,7 +369,7 @@ class ContentService:
             source_id: ID of the source to refresh
 
         Returns:
-            Dict with refresh results
+            Tuple of (result dict, list of new item IDs for background enrichment)
         """
         from datetime import datetime
 
@@ -399,41 +381,22 @@ class ContentService:
             source_type = source.type
             source_url = source.url
             source_name = source.name
-            processing_mode = source.processing_mode
 
         new_items = 0
-        
-        if source_type == SourceType.RSS_FEED:
-            # Re-parse RSS feed
-            feed = self.rss_parser.parse(source_url, fetch_content=True)
+        new_item_ids = []
 
-            # Find new items and generate summaries for them
-            from src.services.summary_service import generate_summary
-            new_feed_items = []
+        if source_type == SourceType.RSS_FEED:
+            # Re-parse RSS feed WITHOUT fetching full content (fast)
+            feed = self.rss_parser.parse(source_url, fetch_content=False)
+
+            # Find and create new items
             with db_session() as session:
                 for feed_item in feed.items:
-                    if not ItemRepository.exists_by_url(session, source_id, feed_item.url):
-                        new_feed_items.append(feed_item)
-
-            # Generate summaries for new items (outside db session to avoid long transactions)
-            item_summaries = {}
-            for feed_item in new_feed_items:
-                if feed_item.content:
-                    summary = generate_summary(feed_item.content)
-                    if summary:
-                        item_summaries[feed_item.url] = summary
-
-            # Create the new items
-            with db_session() as session:
-                for feed_item in new_feed_items:
-                    # Double-check it still doesn't exist
                     if not ItemRepository.exists_by_url(session, source_id, feed_item.url):
                         content_meta = {
                             "author": feed_item.author,
                             "description": feed_item.description,
                         }
-                        if feed_item.url in item_summaries:
-                            content_meta["summary"] = item_summaries[feed_item.url]
 
                         item = ItemRepository.create(
                             session,
@@ -445,11 +408,7 @@ class ContentService:
                             published_at=feed_item.published_at,
                         )
                         new_items += 1
-
-                        # Queue for TTS if eager mode
-                        if processing_mode == ProcessingMode.EAGER:
-                            job_queue = get_job_queue()
-                            job_queue.enqueue(item.id)
+                        new_item_ids.append(item.id)
 
                 # Update source
                 source = SourceRepository.get_by_id(session, source_id)
@@ -460,7 +419,7 @@ class ContentService:
         elif source_type == SourceType.ROYAL_ROAD:
             # Re-parse Royal Road chapter list
             book = self.royal_road_parser.parse(source_url, fetch_chapters=False)
-            
+
             with db_session() as session:
                 for chapter in book.chapters:
                     if not ItemRepository.exists_by_url(session, source_id, chapter.url):
@@ -490,11 +449,13 @@ class ContentService:
 
         logger.info(f"Refreshed source '{source_name}': {new_items} new items")
 
-        return {
+        result = {
             "source_id": source_id,
             "new_items": new_items,
             "message": f"Found {new_items} new items" if new_items else "No new items found",
         }
+
+        return result, new_item_ids
 
     def reparse_source(
         self,
@@ -687,3 +648,72 @@ class ContentService:
             ],
             "processing_mode": "lazy" if len(book.chapters) >= self.settings.lazy_threshold else "eager",
         }
+
+    def enrich_items(self, item_ids: List[int]) -> None:
+        """
+        Background task: fetch full article content, generate summaries,
+        and queue TTS for a list of items.
+
+        This is meant to be called from a background thread/task after the
+        HTTP response has already been sent to the client.
+        """
+        from src.services.summary_service import generate_summary
+
+        logger.info(f"Starting background enrichment for {len(item_ids)} items")
+        enriched = 0
+
+        for item_id in item_ids:
+            try:
+                # Read current item data
+                with db_session() as session:
+                    item = ItemRepository.get_by_id(session, item_id)
+                    if not item:
+                        continue
+                    item_url = item.url
+                    content_text = item.content_text
+                    existing_meta = item.content_meta or {}
+                    source = item.source
+                    processing_mode = source.processing_mode if source else ProcessingMode.EAGER
+
+                # Skip if already enriched (has summary)
+                if existing_meta.get("summary"):
+                    if processing_mode in (ProcessingMode.EAGER, ProcessingMode.NEW_ONLY):
+                        get_job_queue().enqueue(item_id)
+                    continue
+
+                new_content = content_text
+
+                # Fetch full article content if feed-provided content is short
+                if not content_text or len(content_text) < 500:
+                    try:
+                        article = self.article_parser.parse(item_url)
+                        if article.text and len(article.text) > len(content_text or ""):
+                            new_content = article.text
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch content for item {item_id}: {e}")
+
+                # Generate summary
+                summary = None
+                if new_content:
+                    summary = generate_summary(new_content)
+
+                # Update item in DB
+                with db_session() as session:
+                    item = ItemRepository.get_by_id(session, item_id)
+                    if item:
+                        if new_content and new_content != content_text:
+                            item.content_text = new_content
+                        if summary:
+                            meta = item.content_meta or {}
+                            meta["summary"] = summary
+                            item.content_meta = meta
+                        enriched += 1
+
+                # Queue TTS if eager or new_only mode
+                if processing_mode in (ProcessingMode.EAGER, ProcessingMode.NEW_ONLY):
+                    get_job_queue().enqueue(item_id)
+
+            except Exception as e:
+                logger.error(f"Failed to enrich item {item_id}: {e}")
+
+        logger.info(f"Enrichment complete: {enriched}/{len(item_ids)} items enriched")
