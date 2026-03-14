@@ -62,6 +62,7 @@ async def public_sources():
                 "name": s.name,
                 "slug": s.slug,
                 "type": s.type.value,
+                "url": s.url,
                 "item_count": s.item_count,
                 "feed_url": f"{base_url}/feeds/{s.slug}.xml",
                 "in_feed": s.in_feed if s.in_feed is not None else True,

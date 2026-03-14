@@ -4,8 +4,13 @@ import os
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-# Set test database before imports
+# Set test environment before imports
 os.environ["DATABASE_PATH"] = ":memory:"
+os.environ["ADMIN_PASSWORD"] = ""
+
+# Clear cached settings so test env vars take effect
+from src.config import get_settings
+get_settings.cache_clear()
 
 from fastapi.testclient import TestClient
 from src.main import app
@@ -223,6 +228,206 @@ class TestHealthEndpoint:
         response = client.get("/api/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+class TestAuthEndpoints:
+    """Tests for auth-related endpoints."""
+
+    def test_auth_status_no_password(self, client):
+        """Test auth status when no admin password is set."""
+        response = client.get("/api/auth/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert "authenticated" in data
+        assert "auth_required" in data
+
+    @patch("src.web.routes.get_settings")
+    def test_auth_status_with_password(self, mock_settings, client):
+        """Test auth status when admin password is configured."""
+        mock_settings.return_value = Mock(admin_password="secret", base_url="http://localhost:8775")
+        response = client.get("/api/auth/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["auth_required"] is True
+
+
+class TestPublicSourcesEndpoint:
+    """Tests for the public sources endpoint."""
+
+    def test_public_sources_accessible(self, client):
+        """Test public sources endpoint is accessible without auth."""
+        response = client.get("/api/public/sources")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    @patch("src.services.content_service.ArticleParser")
+    def test_public_sources_returns_url(self, mock_parser_class, client):
+        """Test public sources includes the source URL for linking."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="Test Article",
+            text="Content.",
+            url="http://test.com/article",
+            author=None,
+            published_at=None,
+            description=None,
+            image_url=None,
+            image_urls=[],
+        )
+
+        client.post("/api/sources/article", json={"url": "http://test.com/article"})
+
+        response = client.get("/api/public/sources")
+        assert response.status_code == 200
+        sources = response.json()
+        assert len(sources) >= 1
+        # Public endpoint should include url, name, type, item_count, feed_url, in_feed
+        source = sources[0]
+        assert "url" in source
+        assert "name" in source
+        assert "feed_url" in source
+        assert "in_feed" in source
+
+    @patch("src.services.content_service.ArticleParser")
+    def test_public_sources_limited_fields(self, mock_parser_class, client):
+        """Test public sources does NOT expose sensitive fields like settings."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="Test Article",
+            text="Content.",
+            url="http://test.com/article2",
+            author=None,
+            published_at=None,
+            description=None,
+            image_url=None,
+            image_urls=[],
+        )
+
+        client.post("/api/sources/article", json={"url": "http://test.com/article2"})
+
+        response = client.get("/api/public/sources")
+        sources = response.json()
+        source = sources[0]
+        assert "settings" not in source
+        assert "processing_mode" not in source
+
+
+class TestInFeedToggle:
+    """Tests for the in-feed toggle endpoint."""
+
+    @patch("src.services.content_service.RSSFeedParser")
+    def test_toggle_in_feed(self, mock_parser_class, client):
+        """Test toggling a source in/out of the unified feed."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="Toggle Feed",
+            url="http://test.com/togglefeed",
+            description="A feed",
+            image_url=None,
+            items=[],
+        )
+
+        add_resp = client.post("/api/sources/feed", json={"url": "http://test.com/togglefeed"})
+        source_id = add_resp.json()["id"]
+
+        # Toggle off
+        resp = client.patch(f"/api/sources/{source_id}/in-feed")
+        assert resp.status_code == 200
+        assert resp.json()["in_feed"] is False
+
+        # Toggle back on
+        resp = client.patch(f"/api/sources/{source_id}/in-feed")
+        assert resp.status_code == 200
+        assert resp.json()["in_feed"] is True
+
+    def test_toggle_in_feed_not_found(self, client):
+        """Test toggling in-feed for nonexistent source."""
+        resp = client.patch("/api/sources/99999/in-feed")
+        assert resp.status_code == 404
+
+
+class TestSetMode:
+    """Tests for the processing mode endpoint."""
+
+    @patch("src.services.content_service.RSSFeedParser")
+    def test_set_mode(self, mock_parser_class, client):
+        """Test setting processing mode for a source."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="Mode Feed",
+            url="http://test.com/modefeed",
+            description="A feed",
+            image_url=None,
+            items=[],
+        )
+
+        add_resp = client.post("/api/sources/feed", json={"url": "http://test.com/modefeed"})
+        source_id = add_resp.json()["id"]
+
+        resp = client.patch(f"/api/sources/{source_id}/mode", json={"mode": "lazy"})
+        assert resp.status_code == 200
+        assert resp.json()["mode"] == "lazy"
+
+        resp = client.patch(f"/api/sources/{source_id}/mode", json={"mode": "new_only"})
+        assert resp.status_code == 200
+        assert resp.json()["mode"] == "new_only"
+
+    @patch("src.services.content_service.RSSFeedParser")
+    def test_set_invalid_mode(self, mock_parser_class, client):
+        """Test setting an invalid processing mode."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="Mode Feed 2",
+            url="http://test.com/modefeed2",
+            description="A feed",
+            image_url=None,
+            items=[],
+        )
+
+        add_resp = client.post("/api/sources/feed", json={"url": "http://test.com/modefeed2"})
+        source_id = add_resp.json()["id"]
+
+        resp = client.patch(f"/api/sources/{source_id}/mode", json={"mode": "turbo"})
+        assert resp.status_code == 400
+
+    def test_set_mode_not_found(self, client):
+        """Test setting mode for nonexistent source."""
+        resp = client.patch("/api/sources/99999/mode", json={"mode": "lazy"})
+        assert resp.status_code == 404
+
+
+class TestItemsEndpoint:
+    """Tests for item listing with URL field."""
+
+    @patch("src.services.content_service.ArticleParser")
+    def test_items_include_url(self, mock_parser_class, client):
+        """Test that items include the original article URL."""
+        mock_parser = Mock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse.return_value = Mock(
+            title="URL Test Article",
+            text="Content for URL test.",
+            url="http://test.com/url-test",
+            author=None,
+            published_at=None,
+            description=None,
+            image_url=None,
+            image_urls=[],
+        )
+
+        add_resp = client.post("/api/sources/article", json={"url": "http://test.com/url-test"})
+        source_id = add_resp.json()["id"]
+
+        resp = client.get(f"/api/items?source_id={source_id}")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) >= 1
+        assert items[0]["url"] == "http://test.com/url-test"
 
 
 class TestEnrichItems:
